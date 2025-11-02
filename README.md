@@ -4,7 +4,7 @@ A lightweight C wrapper for neofetch that uses a static kitten binary to render 
 
 **Why:** Unlike neofetch --backend kitty, which requires the full Kitty installation, this works even in terminals like Ghostty with only the standalone kitten binary present.
 
-![Demo](https://via.placeholder.com/800x400.png?text=Your+Screenshot+Here)
+![Demo](./examples/2.JPEG)
 
 ## Features
 
