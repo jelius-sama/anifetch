@@ -8,6 +8,7 @@
 #define MAX_LINES 100
 #define MAX_LINE_LENGTH 512
 #define MAX_PATH 1024
+#define MAX_CMD 2048
 
 typedef struct {
     int img_width;
@@ -143,26 +144,37 @@ int main(int argc, char *argv[]) {
     pclose(neofetch_pipe);
 
     // Clear the screen before rendering
-    system("clear");
+    if (system("clear") != 0) {
+        fprintf(stderr, "Warning: Failed to clear screen\n");
+    }
 
     // Build kitten icat command with placement
-    char cmd[1024];
+    char cmd[MAX_CMD];
+    int result;
     
     // Determine scale mode based on crop_mode
     if (strcmp(config.crop_mode, "fill") == 0) {
         // fill mode: crop to square, centered
-        snprintf(cmd, sizeof(cmd), 
+        result = snprintf(cmd, sizeof(cmd), 
                  "kitten icat --align left --place %dx%d@0x0 --scale-up '%s'",
                  config.img_width, neofetch_line_count, image_path);
     } else {
         // auto mode: preserve aspect ratio
-        snprintf(cmd, sizeof(cmd), 
+        result = snprintf(cmd, sizeof(cmd), 
                  "kitten icat --align left --place %dx%d@0x0 --scale-up --background none '%s'",
                  config.img_width, neofetch_line_count, image_path);
     }
     
+    // Check for truncation
+    if (result >= (int)sizeof(cmd)) {
+        fprintf(stderr, "Error: Command string too long\n");
+        return 1;
+    }
+    
     // Display the image (it will be on the left)
-    system(cmd);
+    if (system(cmd) != 0) {
+        fprintf(stderr, "Warning: Failed to display image\n");
+    }
 
     // Move cursor to the right of the image and print neofetch lines
     for (int i = 0; i < neofetch_line_count; i++) {
