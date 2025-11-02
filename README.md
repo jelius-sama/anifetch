@@ -1,6 +1,8 @@
 # anifetch
 
-A custom C implementation of neofetch with side-by-side image rendering using the Kitty graphics protocol. Display your favorite anime images alongside system information!
+A lightweight C wrapper for neofetch that uses a static kitten binary to render images via the Kitty graphics protocol.
+
+**Why:** Unlike neofetch --backend kitty, which requires the full Kitty installation, this works even in terminals like Ghostty with only the standalone kitten binary present.
 
 ![Demo](https://via.placeholder.com/800x400.png?text=Your+Screenshot+Here)
 
@@ -10,7 +12,6 @@ A custom C implementation of neofetch with side-by-side image rendering using th
 - ⚙️ **Fully configurable** - Customize image size, spacing, crop mode via config file
 - 🚀 **Fast** - Written in C for minimal overhead
 - 🎨 **Crop modes** - Choose between `auto` (preserve aspect ratio) or `fill` (crop to fit)
-- 🔧 **Tilde expansion** - Use `~/` in config paths
 - 🖥️ **Terminal agnostic** - Works with any terminal supporting Kitty graphics protocol (Kitty, WezTerm, Ghostty)
 
 ## Prerequisites
@@ -40,19 +41,19 @@ sudo chmod +x /usr/local/bin/kitten
 ### 2. Compile the program
 
 ```bash
-gcc -o anime neofetch_img.c
-sudo mv anime /usr/local/bin/anime
+gcc -O3 -o anifetch main.c
+sudo mv anifetch /usr/local/bin/anifetch
 ```
 
 ### 3. Create the config directory
 
 ```bash
-mkdir -p ~/.config/anime
+mkdir -p ~/.config/anifetch
 ```
 
 ### 4. Create the configuration file
 
-Create `~/.config/anime/config.conf`:
+Create `~/.config/anifetch/config.conf`:
 
 ```ini
 # Image width in characters
@@ -75,13 +76,13 @@ image_path=~/Pictures/anime.jpg
 If you know your terminal supports the Kitty graphics protocol:
 
 ```bash
-anime ~/path/to/image.jpg
+anifetch ~/path/to/image.jpg
 ```
 
 Or use the default image from config:
 
 ```bash
-anime
+anifetch
 ```
 
 ### Recommended: Shell integration
@@ -99,11 +100,17 @@ if [ -z "$REAL_TERM" ]; then
     esac
 fi
 
-anifetch() {
+anime() {
     case "$REAL_TERM" in
         kitty|xterm-kitty|wezterm|xterm-ghostty|ghostty)
-            # Custom C version of neofetch using kitten static binary
-            /usr/local/bin/anime
+            # Lightweight C wrapper around neofetch leveraging a static kitten binary
+            /usr/local/bin/anifetch
+
+            # NOTE: The following command only works if Kitty is installed.
+            # INFO: It will work in Ghostty or Kitty as long as the Kitty app is installed,
+            #       but will fail once Kitty is removed, even if the kitten binary is present.
+            # neofetch --backend kitty --source "$HOME/.config/neofetch/image/makeine.webp" \
+            #          --size 400px --crop_mode fit
             ;;
         *)
             # Fallback: Your terminal doesn't support image rendering
@@ -117,7 +124,7 @@ anifetch() {
 Then simply run:
 
 ```bash
-anifetch
+anime
 ```
 
 ### Optional: Run on shell startup
@@ -125,7 +132,7 @@ anifetch
 Add this to your `~/.zshrc`:
 
 ```bash
-anifetch
+anime # OR `anifetch`
 ```
 
 ## Configuration Options
@@ -167,13 +174,13 @@ The shell integration above handles tmux by detecting the real terminal type bef
 
 ### Config not loading
 
-- Verify config file exists: `cat ~/.config/anime/config.conf`
-- Check file permissions: `ls -la ~/.config/anime/config.conf`
+- Verify config file exists: `cat ~/.config/anifetch/config.conf`
+- Check file permissions: `ls -la ~/.config/anifetch/config.conf`
 - Look for error messages when running the program
 
 ## How It Works
 
-1. Reads configuration from `~/.config/anime/config.conf`
+1. Reads configuration from `~/.config/anifetch/config.conf`
 2. Runs `neofetch --off` to get system info without ASCII art
 3. Clears the screen
 4. Uses `kitten icat` with the `--place` option to render the image on the left
@@ -188,7 +195,7 @@ The shell integration above handles tmux by detecting the real terminal type bef
 
 ## License
 
-MIT License - Feel free to use and modify!
+[MIT License](./LICENSE)
 
 ## Contributing
 

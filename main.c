@@ -95,10 +95,30 @@ void load_config(Config *config, const char *config_path) {
 }
 
 int main(int argc, char *argv[]) {
+    // Handle flags
+    if (argc >= 2) {
+        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+            printf("Usage: %s [OPTIONS] [IMAGE_PATH]\n\n", argv[0]);
+            printf("Display system information with an anime image\n\n");
+            printf("Options:\n");
+            printf("  -h, --help       Show this help message\n");
+            printf("  -v, --version    Show version information\n");
+            printf("  IMAGE_PATH       Path to image (overrides config)\n\n");
+            printf("Config file: ~/.config/anifetch/config.conf\n");
+            return 0;
+        }
+        
+        if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
+            printf("anifetch v1.0.0\n");
+            printf("A side-by-side neofetch with kitty graphics protocol\n");
+            return 0;
+        }
+    }
+
     Config config;
     
     // Expand config path
-    char *config_path = expand_path("~/.config/anime/config.conf");
+    char *config_path = expand_path("~/.config/anifetch/config.conf");
     
     // Load configuration
     load_config(&config, config_path);
@@ -112,7 +132,7 @@ int main(int argc, char *argv[]) {
         image_path = config.image_path;
     } else {
         fprintf(stderr, "Usage: %s <image.jpg>\n", argv[0]);
-        fprintf(stderr, "Or set 'image_path' in ~/.config/anime/config.conf\n");
+        fprintf(stderr, "Or set 'image_path' in ~/.config/anifetch/config.conf\n");
         return 1;
     }
     
