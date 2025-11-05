@@ -4,6 +4,12 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <wordexp.h>
+#include <pthread.h>
+
+/*********************************************************
+    *                  Disclaimer
+    *     This program is Vibe Coded with claude.ai
+    * ****************************************************/
 
 #define MAX_LINES 100
 #define MAX_LINE_LENGTH 512
@@ -16,6 +22,27 @@ typedef struct {
     char image_path[MAX_PATH];
     char crop_mode[16]; // "auto" or "fill"
 } Config;
+
+typedef struct {
+    char lines[MAX_LINES][MAX_LINE_LENGTH];
+    int line_count;
+    int success;
+} NeofetchResult;
+
+typedef struct {
+    char command[MAX_CMD];
+    int success;
+} ImageResult;
+
+typedef struct {
+    Config *config;
+    const char *image_path;
+    ImageResult *result;
+} ImageThreadArgs;
+
+typedef struct {
+    NeofetchResult *result;
+} NeofetchThreadArgs;
 
 int get_terminal_width() {
     struct winsize w;
@@ -94,6 +121,67 @@ void load_config(Config *config, const char *config_path) {
     fclose(fp);
 }
 
+void* neofetch_thread(void *arg) {
+    NeofetchThreadArgs *args = (NeofetchThreadArgs*)arg;
+    NeofetchResult *result = args->result;
+    
+    result->line_count = 0;
+    result->success = 0;
+
+    // Get neofetch output
+    FILE *neofetch_pipe = popen("neofetch --off 2>/dev/null", "r");
+    if (!neofetch_pipe) {
+        fprintf(stderr, "Error: Could not run neofetch\n");
+        return NULL;
+    }
+
+    while (fgets(result->lines[result->line_count], MAX_LINE_LENGTH, neofetch_pipe) != NULL && 
+           result->line_count < MAX_LINES) {
+        // Remove newline
+        size_t len = strlen(result->lines[result->line_count]);
+        if (len > 0 && result->lines[result->line_count][len-1] == '\n') {
+            result->lines[result->line_count][len-1] = '\0';
+        }
+        result->line_count++;
+    }
+    pclose(neofetch_pipe);
+    
+    result->success = 1;
+    return NULL;
+}
+
+void* image_thread(void *arg) {
+    ImageThreadArgs *args = (ImageThreadArgs*)arg;
+    ImageResult *result = args->result;
+    
+    result->success = 0;
+
+    // Build kitten icat command with placement
+    int snprintf_result;
+    
+    // Determine scale mode based on crop_mode
+    if (strcmp(args->config->crop_mode, "fill") == 0) {
+        // fill mode: crop to square (width x width), centered
+        snprintf_result = snprintf(result->command, sizeof(result->command), 
+                 "kitten icat --align left --place %dx%d@0x0 --scale-up '%s'",
+                 args->config->img_width, args->config->img_width, args->image_path);
+    } else {
+        // auto mode: preserve aspect ratio, height auto-scales based on width
+        snprintf_result = snprintf(result->command, sizeof(result->command), 
+                 "kitten icat --align left --place %dx0@0x0 --scale-up --background none '%s'",
+                 args->config->img_width, args->image_path);
+    }
+    
+    // Check for truncation
+    if (snprintf_result >= (int)sizeof(result->command)) {
+        fprintf(stderr, "Error: Command string too long\n");
+        return NULL;
+    }
+    
+    result->success = 1;
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     // Handle flags
     if (argc >= 2) {
@@ -142,69 +230,76 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Get neofetch output
-    FILE *neofetch_pipe = popen("neofetch --off 2>/dev/null", "r");
-    if (!neofetch_pipe) {
-        fprintf(stderr, "Error: Could not run neofetch\n");
+    // Prepare thread data structures
+    NeofetchResult neofetch_result;
+    ImageResult image_result;
+    
+    NeofetchThreadArgs neofetch_args = {
+        .result = &neofetch_result
+    };
+    
+    ImageThreadArgs image_args = {
+        .config = &config,
+        .image_path = image_path,
+        .result = &image_result
+    };
+    
+    // Create both threads in parallel
+    pthread_t neofetch_tid, image_tid;
+    
+    if (pthread_create(&neofetch_tid, NULL, neofetch_thread, &neofetch_args) != 0) {
+        fprintf(stderr, "Error: Failed to create neofetch thread\n");
+        return 1;
+    }
+    
+    if (pthread_create(&image_tid, NULL, image_thread, &image_args) != 0) {
+        fprintf(stderr, "Error: Failed to create image thread\n");
+        pthread_join(neofetch_tid, NULL); // Clean up first thread
+        return 1;
+    }
+    
+    // Wait for both threads to complete
+    if (pthread_join(neofetch_tid, NULL) != 0) {
+        fprintf(stderr, "Error: Failed to join neofetch thread\n");
+        return 1;
+    }
+    
+    if (pthread_join(image_tid, NULL) != 0) {
+        fprintf(stderr, "Error: Failed to join image thread\n");
+        return 1;
+    }
+    
+    // Check both threads succeeded
+    if (!neofetch_result.success) {
+        fprintf(stderr, "Error: Neofetch thread failed\n");
+        return 1;
+    }
+    
+    if (!image_result.success) {
+        fprintf(stderr, "Error: Image thread failed\n");
         return 1;
     }
 
-    char neofetch_lines[MAX_LINES][MAX_LINE_LENGTH];
-    int neofetch_line_count = 0;
-    
-    while (fgets(neofetch_lines[neofetch_line_count], MAX_LINE_LENGTH, neofetch_pipe) != NULL && 
-           neofetch_line_count < MAX_LINES) {
-        // Remove newline
-        size_t len = strlen(neofetch_lines[neofetch_line_count]);
-        if (len > 0 && neofetch_lines[neofetch_line_count][len-1] == '\n') {
-            neofetch_lines[neofetch_line_count][len-1] = '\0';
-        }
-        neofetch_line_count++;
-    }
-    pclose(neofetch_pipe);
-
+    // Both threads completed successfully, now render in main thread
     // Clear the screen before rendering
     if (system("clear") != 0) {
         fprintf(stderr, "Warning: Failed to clear screen\n");
     }
 
-    // Build kitten icat command with placement
-    char cmd[MAX_CMD];
-    int result;
-    
-    // Determine scale mode based on crop_mode
-    if (strcmp(config.crop_mode, "fill") == 0) {
-        // fill mode: crop to square, centered
-        result = snprintf(cmd, sizeof(cmd), 
-                 "kitten icat --align left --place %dx%d@0x0 --scale-up '%s'",
-                 config.img_width, neofetch_line_count, image_path);
-    } else {
-        // auto mode: preserve aspect ratio
-        result = snprintf(cmd, sizeof(cmd), 
-                 "kitten icat --align left --place %dx%d@0x0 --scale-up --background none '%s'",
-                 config.img_width, neofetch_line_count, image_path);
-    }
-    
-    // Check for truncation
-    if (result >= (int)sizeof(cmd)) {
-        fprintf(stderr, "Error: Command string too long\n");
-        return 1;
-    }
-    
     // Display the image (it will be on the left)
-    if (system(cmd) != 0) {
+    if (system(image_result.command) != 0) {
         fprintf(stderr, "Warning: Failed to display image\n");
     }
 
     // Move cursor to the right of the image and print neofetch lines
-    for (int i = 0; i < neofetch_line_count; i++) {
+    for (int i = 0; i < neofetch_result.line_count; i++) {
         // Move cursor to column after image
         printf("\033[%d;%dH", i + 1, config.img_width + config.text_offset);
-        printf("%s", neofetch_lines[i]);
+        printf("%s", neofetch_result.lines[i]);
     }
     
     // Move cursor to the line right after neofetch text
-    printf("\033[%d;1H", neofetch_line_count + 1);
+    printf("\033[%d;1H", neofetch_result.line_count + 1);
     fflush(stdout);
 
     return 0;
