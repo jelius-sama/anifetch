@@ -15,6 +15,7 @@ typedef struct {
   int text_offset;
   char image_path[MAX_PATH];
   char crop_mode[16]; // "auto" or "fill"
+  char backend[16];   // "neofetch" or "fastfetch"
 } Config;
 
 int get_terminal_width() {
@@ -45,6 +46,7 @@ void load_config(Config *config, const char *config_path) {
   config->text_offset = 5;
   config->image_path[0] = '\0';
   strcpy(config->crop_mode, "auto");
+  strcpy(config->backend, "fastfetch");
 
   FILE *fp = fopen(config_path, "r");
   if (!fp) {
@@ -93,6 +95,8 @@ void load_config(Config *config, const char *config_path) {
       free(expanded);
     } else if (strcmp(key, "crop_mode") == 0) {
       strncpy(config->crop_mode, value, sizeof(config->crop_mode) - 1);
+    } else if (strcmp(key, "backend") == 0) {
+      strncpy(config->backend, value, sizeof(config->backend) - 1);
     }
   }
 
@@ -147,28 +151,37 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Get neofetch output
-  FILE *neofetch_pipe =
-      popen("script -qfc \"fastfetch --logo none\" /dev/null", "r");
-  if (!neofetch_pipe) {
-    fprintf(stderr, "Error: Could not run neofetch\n");
+  // Build fetch command based on backend
+  char fetch_cmd[MAX_CMD];
+  if (strcmp(config.backend, "neofetch") == 0) {
+    snprintf(fetch_cmd, sizeof(fetch_cmd), "neofetch --off 2>/dev/null");
+  } else {
+    // Default to fastfetch
+    snprintf(fetch_cmd, sizeof(fetch_cmd),
+             "script -qfc \"fastfetch --logo none\" /dev/null");
+  }
+
+  // Get fetch output
+  FILE *fetch_pipe = popen(fetch_cmd, "r");
+  if (!fetch_pipe) {
+    fprintf(stderr, "Error: Could not run %s\n", config.backend);
     return 1;
   }
 
-  char neofetch_lines[MAX_LINES][MAX_LINE_LENGTH];
-  int neofetch_line_count = 0;
+  char fetch_lines[MAX_LINES][MAX_LINE_LENGTH];
+  int fetch_line_count = 0;
 
-  while (fgets(neofetch_lines[neofetch_line_count], MAX_LINE_LENGTH,
-               neofetch_pipe) != NULL &&
-         neofetch_line_count < MAX_LINES) {
+  while (fgets(fetch_lines[fetch_line_count], MAX_LINE_LENGTH, fetch_pipe) !=
+             NULL &&
+         fetch_line_count < MAX_LINES) {
     // Remove newline
-    size_t len = strlen(neofetch_lines[neofetch_line_count]);
-    if (len > 0 && neofetch_lines[neofetch_line_count][len - 1] == '\n') {
-      neofetch_lines[neofetch_line_count][len - 1] = '\0';
+    size_t len = strlen(fetch_lines[fetch_line_count]);
+    if (len > 0 && fetch_lines[fetch_line_count][len - 1] == '\n') {
+      fetch_lines[fetch_line_count][len - 1] = '\0';
     }
-    neofetch_line_count++;
+    fetch_line_count++;
   }
-  pclose(neofetch_pipe);
+  pclose(fetch_pipe);
 
   // Clear the screen before rendering
   if (system("clear") != 0) {
@@ -185,14 +198,14 @@ int main(int argc, char *argv[]) {
     result = snprintf(cmd, sizeof(cmd),
                       "kitten icat --stdin=no --transfer-mode=file --align "
                       "left --place %dx%d@0x0 --scale-up '%s'",
-                      config.img_width, neofetch_line_count, image_path);
+                      config.img_width, fetch_line_count, image_path);
   } else {
     // auto mode: preserve aspect ratio
     result = snprintf(cmd, sizeof(cmd),
                       "kitten icat --stdin=no --transfer-mode=file --align "
                       "left --place %dx%d@0x0 --scale-up "
                       "--background none '%s'",
-                      config.img_width, neofetch_line_count, image_path);
+                      config.img_width, fetch_line_count, image_path);
   }
 
   // Check for truncation
@@ -206,15 +219,15 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Warning: Failed to display image\n");
   }
 
-  // Move cursor to the right of the image and print neofetch lines
-  for (int i = 0; i < neofetch_line_count; i++) {
+  // Move cursor to the right of the image and print fetch lines
+  for (int i = 0; i < fetch_line_count; i++) {
     // Move cursor to column after image
     printf("\033[%d;%dH", i + 1, config.img_width + config.text_offset);
-    printf("%s", neofetch_lines[i]);
+    printf("%s", fetch_lines[i]);
   }
 
-  // Move cursor to the line right after neofetch text
-  printf("\033[%d;1H", neofetch_line_count + 1);
+  // Move cursor to the line right after fetch text
+  printf("\033[%d;1H", fetch_line_count + 1);
   fflush(stdout);
 
   return 0;
