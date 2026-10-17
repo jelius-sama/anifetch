@@ -1,34 +1,33 @@
 # anifetch
 
-A lightweight C wrapper for neofetch that uses a static kitten binary to render images via the Kitty graphics protocol.
+A lightweight C wrapper around `fastfetch` / `neofetch` that uses the standalone `kitten` binary to render an image next to your system info via the Kitty graphics protocol.
 
-**Why:** Unlike neofetch --backend kitty, which requires the full Kitty installation, this works even in terminals like Ghostty with only the standalone kitten binary present.
+**Why:** `neofetch --backend kitty` needs a full Kitty installation. anifetch only needs the static `kitten` binary, so it works in terminals like Ghostty and WezTerm too.
 
-![Demo](./examples/2.JPEG)
+![Demo](./examples/image_3.png)
 
 ## Features
 
-- 🖼️ **Side-by-side rendering** - Image on the left, system info on the right
-- ⚙️ **Fully configurable** - Customize image size, spacing, crop mode via config file
-- 🚀 **Fast** - Written in C for minimal overhead
-- 🎨 **Crop modes** - Choose between `auto` (preserve aspect ratio) or `fill` (crop to fit)
-- 🖥️ **Terminal agnostic** - Works with any terminal supporting Kitty graphics protocol (Kitty, WezTerm, Ghostty)
+- 🖼️ **Side-by-side rendering**: image on the left, system info on the right
+- 🎲 **Random image per run**: point it at a directory and it picks an `image_*` file
+- 🔐 **Encrypted image support**: keep images as `.gpg` files; they are decrypted in memory and never written to disk
+- ⚙️ **Configurable**: image width/height, spacing, crop mode, fetch backend
+- 🎨 **Crop modes**: `auto` (preserve aspect ratio) or `fill`
+- 🚀 **Fast**: plain C, no shell involved (`fork` + `exec` everywhere)
 
 ## Prerequisites
 
-- A terminal that supports the Kitty graphics protocol:
-  - [Kitty](https://sw.kovidgoyal.net/kitty/)
-  - [WezTerm](https://wezfurlong.org/wezterm/)
-  - [Ghostty](https://ghostty.org/)
-- `neofetch` installed on your system
-- GCC compiler
-- `kitten` static binary (see installation steps)
+- Linux
+- A terminal that supports the Kitty graphics protocol: [Kitty](https://sw.kovidgoyal.net/kitty/), [WezTerm](https://wezfurlong.org/wezterm/) or [Ghostty](https://ghostty.org/)
+- A fetch backend: `fastfetch` (default) or `neofetch`
+- `script` (from util-linux, normally preinstalled). The fastfetch backend runs through it so fastfetch believes it has a TTY and keeps its colors
+- `gcc` or `clang`
+- `kitten` static binary (see below)
+- `gpg`, only if you use encrypted images
 
 ## Installation
 
 ### 1. Download the `kitten` static binary
-
-Download the latest nightly build:
 
 ```bash
 sudo curl -L https://github.com/kovidgoyal/kitty/releases/download/nightly/kitten-linux-amd64 \
@@ -36,175 +35,160 @@ sudo curl -L https://github.com/kovidgoyal/kitty/releases/download/nightly/kitte
 sudo chmod +x /usr/local/bin/kitten
 ```
 
-**Note:** This static binary works standalone and doesn't require Kitty to be installed.
+Use `kitten-linux-arm64` instead on ARM machines. The static binary works standalone; Kitty does not need to be installed.
 
-### 2. Compile the program
+### 2. Compile
 
 ```bash
 gcc -O3 -o anifetch main.c
 sudo mv anifetch /usr/local/bin/anifetch
 ```
 
-### 3. Create the config directory
+### 3. Create the config
 
 ```bash
 mkdir -p ~/.config/anifetch
 ```
 
-### 4. Create the configuration file
-
 Create `~/.config/anifetch/config.conf`:
 
 ```ini
-# Image width in characters
+# Image width in terminal columns
 img_width=40
 
-# Space between image and text (in columns)
+# Image height in rows. 0 (or unset) = match the height of the fetch output
+img_height=0
+
+# Space between the image and the text, in columns
 text_offset=5
 
-# Crop mode: "auto" (preserve aspect ratio) or "fill" (crop to fit)
+# "auto" (preserve aspect ratio, transparent background) or "fill"
 crop_mode=fill
 
-# Default image path (tilde expansion supported!)
-image_path=~/Pictures/anime.jpg
+# "fastfetch" (default) or "neofetch"
+backend=fastfetch
+
+# A file inside your image directory (see "How images are picked")
+image_path=~/Pictures/anime/image_01.png
 ```
+
+Lines starting with `#` are ignored. If the config file is missing, defaults are used and a warning is printed.
 
 ## Usage
 
-### Direct usage
-
-If you know your terminal supports the Kitty graphics protocol:
-
 ```bash
-anifetch ~/path/to/image.jpg
+anifetch              # random image_* file from the directory of image_path
+anifetch DIR          # random image_* file from DIR
+anifetch FILE         # show exactly this file
+anifetch -h | --help
+anifetch -v | --version
 ```
 
-Or use the default image from config:
+anifetch refuses to run as root. `sudo` strips the display-related environment variables, which breaks rendering.
+
+### How images are picked
+
+- **No argument:** the filename is stripped from `image_path` to get a directory, and a random file whose name **starts with `image_`** is chosen from it. If none match, the exact `image_path` is used as a fallback.
+- **Directory argument:** same random pick, but from the directory you gave.
+- **File argument:** used directly, no scanning.
+
+Only filenames beginning with `image_` are considered (up to 256 per directory). Any extension works, e.g. `image_01.png`, `image_02.webp`, `image_03.png.gpg`.
+
+### Encrypted images
+
+If the chosen file ends in `.gpg`, anifetch asks for a passphrase (echo off) and decrypts it in memory.
+
+Encrypt an image (symmetric, passphrase-based):
 
 ```bash
-anifetch
+gpg --symmetric --cipher-algo AES256 -o image_01.png.gpg image_01.png
+shred -u image_01.png   # remove the plaintext original
 ```
 
-### Recommended: Shell integration
+What happens at runtime:
 
-Add this to your `~/.zshrc` (or `~/.bashrc`):
+1. `gpg` is launched with `--batch --pinentry-mode loopback --passphrase-fd 3 -d`. The passphrase goes over a pipe on fd 3, so it never appears in `argv` or `ps`.
+2. The decrypted bytes are read from `gpg`'s stdout into a buffer (locked with `mlock` on a best-effort basis to keep it out of swap).
+3. The buffer is piped to `kitten icat --stdin=yes`, then wiped.
 
-```bash
-# To bypass tmux messing around
-if [ -z "$REAL_TERM" ]; then
-    case "$TERM" in
-        *kitty*)   export REAL_TERM="kitty" ;;
-        *wezterm*) export REAL_TERM="wezterm" ;;
-        *ghostty*) export REAL_TERM="ghostty" ;;
-        *)         export REAL_TERM="generic" ;;
-    esac
-fi
+A wrong passphrase or a corrupt file prints `Decryption failed (wrong passphrase or bad file).`
 
-anime() {
-    case "$REAL_TERM" in
-        kitty|xterm-kitty|wezterm|xterm-ghostty|ghostty)
-            # Lightweight C wrapper around neofetch leveraging a static kitten binary
-            /usr/local/bin/anifetch
+> **Note:** anifetch decides by the `.gpg` extension only. Every run that picks an encrypted file prompts for the passphrase, so avoid pointing shell startup at an encrypted directory. Plain `image_*` files in the same directory work without a prompt.
 
-            # NOTE: The following command only works if Kitty is installed.
-            # INFO: It will work in Ghostty or Kitty as long as the Kitty app is installed,
-            #       but will fail once Kitty is removed, even if the kitten binary is present.
-            # neofetch --backend kitty --source "$HOME/.config/neofetch/image/makeine.webp" \
-            #          --size 400px --crop_mode fit
-            ;;
-        *)
-            # Fallback: Your terminal doesn't support image rendering
-            clear
-            neofetch
-            ;;
-    esac
-}
-```
-
-Then simply run:
-
-```bash
-anime
-```
-
-### Optional: Run on shell startup
-
-Add this to your `~/.zshrc`:
-
-```bash
-anime # OR `anifetch`
-```
-
-## Configuration Options
+## Configuration options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `img_width` | integer | `40` | Width of the image in terminal columns |
-| `text_offset` | integer | `5` | Space between image and neofetch text |
-| `crop_mode` | string | `auto` | Image crop mode: `auto` or `fill` |
-| `image_path` | string | none | Default image path (supports `~/`) |
+| `img_width` | integer | `40` | Image width in terminal columns |
+| `img_height` | integer | `0` | Image height in rows. `0` uses the number of lines the fetch backend printed |
+| `text_offset` | integer | `5` | Columns between the image and the text |
+| `crop_mode` | string | `auto` | `auto` or `fill` |
+| `backend` | string | `fastfetch` | `fastfetch` or `neofetch` (anything else falls back to fastfetch) |
+| `image_path` | string | none | A file inside your image directory; `~/` is expanded |
 
-### Crop Modes
+### Crop modes
 
-- **`auto`**: Preserves the original aspect ratio of the image. Best for portraits or when you want to see the full image.
-- **`fill`**: Crops the image to fill the entire allocated space (centered crop). Best for making images appear consistently sized.
+- **`auto`**: keeps the original aspect ratio with a transparent background. Good for portraits or when you want to see the whole image.
+- **`fill`**: scales the image to fill the allocated space. Good for a consistent look across different images.
 
-## Customizing Neofetch Output
+## Customizing the fetch output
 
-You can customize what information neofetch displays. For reference configurations, check out:
-- [jelius-sama's neofetch config](https://github.com/jelius-sama/dotfiles/tree/neofetch)
+anifetch just displays what the backend prints (`fastfetch --logo none` or `neofetch --off`), so customize those tools themselves:
 
-Edit your `~/.config/neofetch/config.conf` to customize the information displayed.
+- fastfetch: `~/.config/fastfetch/config.jsonc`
+- neofetch: `~/.config/neofetch/config.conf` ([example config](https://git.jelius.dev/jelius-sama/dotfiles/src/branch/neofetch))
 
 ## Troubleshooting
 
-### Image not displaying
+**Image not displaying**
+1. Check that your terminal supports the Kitty graphics protocol.
+2. Run `kitten icat /path/to/image.jpg` directly.
+3. Make sure the file exists and is readable. anifetch prints `image file '...' not found` otherwise.
 
-1. **Check terminal compatibility**: Verify your terminal supports Kitty graphics protocol
-2. **Verify kitten binary**: Run `kitten icat /path/to/image.jpg` directly
-3. **Check image path**: Ensure the image file exists and is readable
+**`no image_ files found in '...'`**
+Your files must be named `image_something.ext`. Other names are ignored when scanning a directory (pass the file directly to bypass this).
 
-### Gap between output and prompt
+**`Decryption failed`**
+- Check the passphrase.
+- Check `gpg` is installed and the file really is a symmetric `gpg` file.
+- Test outside anifetch: `gpg -d image_01.png.gpg | kitten icat --stdin=yes`.
 
-This is normal - the image height determines the spacing. Adjust `img_width` in config to change the image size.
+**`Run without sudo privilege!`**
+Run it as your normal user.
 
-### Tmux issues
+**Text colors missing (fastfetch)**
+Make sure `script` is installed; the fastfetch backend depends on it.
 
-The shell integration above handles tmux by detecting the real terminal type before tmux wraps it. Make sure `REAL_TERM` is exported before entering tmux.
+**Gap between output and prompt**
+This is normal. The image height determines the spacing. Adjust `img_width` or `img_height` to change it.
 
-### Config not loading
+**Config not loading**
+- `cat ~/.config/anifetch/config.conf`
+- `ls -la ~/.config/anifetch/config.conf`
+- Look for warnings printed when the program starts.
 
-- Verify config file exists: `cat ~/.config/anifetch/config.conf`
-- Check file permissions: `ls -la ~/.config/anifetch/config.conf`
-- Look for error messages when running the program
+## How it works
 
-## How It Works
+1. Loads `~/.config/anifetch/config.conf`.
+2. Resolves which image to show (file, directory scan, or config hint).
+3. If the image is `.gpg`, prompts for the passphrase and decrypts it into memory.
+4. Runs the backend (`fastfetch --logo none` through `script`, or `neofetch --off`) and captures its output.
+5. Clears the screen and runs `kitten icat --place <w>x<h>@0x0` to draw the image on the left, from the file or from stdin for encrypted images.
+6. Moves the cursor and prints each fetch line to the right of the image.
+7. Parks the cursor below everything, with no extra gap.
 
-1. Reads configuration from `~/.config/anifetch/config.conf`
-2. Runs `neofetch --off` to get system info without ASCII art
-3. Clears the screen
-4. Uses `kitten icat` with the `--place` option to render the image on the left
-5. Positions cursor and prints neofetch output line-by-line on the right
-6. Positions cursor after the content with no extra gaps
+## Limitations
+
+- Linux only.
+- Up to 100 fetch lines, 512 characters each; paths up to 1024 characters.
+- Encryption is detected by the `.gpg` extension, not by inspecting file contents.
 
 ## Credits
 
 - Uses the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
 - Inspired by [neofetch](https://github.com/dylanaraps/neofetch)
-- Terminal compatibility layer idea from various dotfiles in the community
+- Terminal compatibility ideas from various dotfiles in the community
 
 ## License
 
 [MIT License](./LICENSE)
-
-## Contributing
-
-Pull requests are welcome! Feel free to:
-- Add new configuration options
-- Improve terminal compatibility
-- Fix bugs
-- Enhance documentation
-
----
-
-Made with ❤️ for anime and ricing enthusiasts
